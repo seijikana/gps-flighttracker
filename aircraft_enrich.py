@@ -18,8 +18,36 @@ import requests
 
 import config
 import db
+from country_names_ja import COUNTRY_NAME_JA
 
 logger = logging.getLogger(__name__)
+
+_WORLD_AIRPORTS_PATH = os.path.join(os.path.dirname(__file__), "data", "airports_world.csv")
+_world_airports_db = None  # code -> (name, country_iso2) の辞書（遅延ロード）
+
+
+def _load_world_airports_db():
+    """OurAirports由来の世界全空港データベース（data/airports_world.csv）を読み込む。
+
+    手動キュレーションの_DOMESTIC_AIRPORTS/_FOREIGN_AIRPORTSでカバーできていない
+    空港コードのフォールバックとして使う（「国名(空港名)」形式で表示）。
+    """
+    global _world_airports_db
+    if _world_airports_db is not None:
+        return _world_airports_db
+    _world_airports_db = {}
+    if not os.path.exists(_WORLD_AIRPORTS_PATH):
+        logger.warning("世界空港データベースが見つかりません: %s", _WORLD_AIRPORTS_PATH)
+        return _world_airports_db
+    with open(_WORLD_AIRPORTS_PATH, encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            code = (row.get("code") or "").strip().upper()
+            name = (row.get("name") or "").strip()
+            country = (row.get("country") or "").strip().upper()
+            if code and name:
+                _world_airports_db[code] = (name, country)
+    logger.info("世界空港データベースを読み込みました（%d件）", len(_world_airports_db))
+    return _world_airports_db
 
 _aircraft_type_db = None  # icao24 -> aircraft_type の辞書（遅延ロード）
 
@@ -285,9 +313,13 @@ _FOREIGN_AIRPORTS = {
 
 
 def format_airport(code):
-    """空港コードを「空港名(県名)」（国内）または「国名(都市)」（海外）の表記に変換する。
+    """空港コードを表記に変換する。
 
-    未収録の空港コードは元のコードをそのまま返す（簡易テーブルのため要拡充）。
+    1. 手動キュレーション済みの国内空港 -> 「空港名(県名)」
+    2. 手動キュレーション済みの主要海外空港 -> 「国名(都市)」
+    3. 上記未収録の場合、世界全空港データベース(OurAirports由来)から
+       「国名(空港名)」で補完する。
+    4. データベースにも無い場合は元のコードをそのまま返す。
     """
     if not code:
         return None
@@ -298,6 +330,11 @@ def format_airport(code):
     if code in _FOREIGN_AIRPORTS:
         city, country = _FOREIGN_AIRPORTS[code]
         return f"{country}({city})"
+    world_entry = _load_world_airports_db().get(code)
+    if world_entry:
+        name, country_iso2 = world_entry
+        country_ja = COUNTRY_NAME_JA.get(country_iso2, country_iso2)
+        return f"{country_ja}({name})"
     return code
 
 
