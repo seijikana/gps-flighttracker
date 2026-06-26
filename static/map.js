@@ -203,18 +203,20 @@
         var spd = ac.speed_kmh != null ? Math.round(ac.speed_kmh) + " km/h" : "-";
         var airlineCountry = [ac.airline, ac.country].filter(Boolean).join(" / ");
 
+        // 各行を<div>で独立したブロックにする（<br>とdisplay:blockを併用すると
+        // 行間が二重になるため、改行は全てdiv境界のみで行う）
         var lines = [
-          "<strong>" + (ac.callsign || ac.icao) + "</strong>" + (airlineCountry ? " / " + airlineCountry : ""),
+          "<div><strong>" + (ac.callsign || ac.icao) + "</strong>" + (airlineCountry ? " / " + airlineCountry : "") + "</div>",
         ];
         if (ac.aircraft_type) {
-          lines.push(ac.aircraft_type);
+          lines.push("<div>" + ac.aircraft_type + "</div>");
         }
-        lines.push("高度: " + alt + " / 速度: " + spd);
+        lines.push("<div>高度: " + alt + " / 速度: " + spd + "</div>");
         if (ac.origin) {
-          lines.push('<span class="route-line">発: ' + ac.origin + "</span>");
+          lines.push('<div class="route-line">発: ' + ac.origin + "</div>");
         }
         if (ac.destination) {
-          lines.push('<span class="route-line">→ 着: ' + ac.destination + "</span>");
+          lines.push('<div class="route-line">→ 着: ' + ac.destination + "</div>");
         }
 
         return (
@@ -223,7 +225,7 @@
           "; color:" +
           color +
           '">' +
-          lines.join("<br>") +
+          lines.join("") +
           "</div>"
         );
       })
