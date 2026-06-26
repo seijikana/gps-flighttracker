@@ -25,6 +25,32 @@ logger = logging.getLogger(__name__)
 _WORLD_AIRPORTS_PATH = os.path.join(os.path.dirname(__file__), "data", "airports_world.csv")
 _world_airports_db = None  # code -> (name, country_iso2) の辞書（遅延ロード）
 
+_WORLD_AIRLINES_PATH = os.path.join(os.path.dirname(__file__), "data", "airlines_world.csv")
+_world_airlines_db = None  # ICAO3文字コード -> 英語名 の辞書（遅延ロード、OpenFlights由来）
+
+
+def _load_world_airlines_db():
+    """OpenFlights由来の世界航空会社データベース（data/airlines_world.csv）を読み込む。
+
+    手動キュレーションの_AIRLINE_JA（日本語名）でカバーできていないコールサイン
+    プレフィックスのフォールバックとして使う（英語名のまま表示）。
+    """
+    global _world_airlines_db
+    if _world_airlines_db is not None:
+        return _world_airlines_db
+    _world_airlines_db = {}
+    if not os.path.exists(_WORLD_AIRLINES_PATH):
+        logger.warning("世界航空会社データベースが見つかりません: %s", _WORLD_AIRLINES_PATH)
+        return _world_airlines_db
+    with open(_WORLD_AIRLINES_PATH, encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            icao = (row.get("icao") or "").strip().upper()
+            name = (row.get("name") or "").strip()
+            if icao and name:
+                _world_airlines_db[icao] = name
+    logger.info("世界航空会社データベースを読み込みました（%d件）", len(_world_airlines_db))
+    return _world_airlines_db
+
 
 def _load_world_airports_db():
     """OurAirports由来の世界全空港データベース（data/airports_world.csv）を読み込む。
@@ -104,6 +130,59 @@ def _save_cache(icao, info):
                 time.time(),
             ),
         )
+
+
+_ADSBDB_API_BASE = "https://api.adsbdb.com/v0"
+
+
+def _fetch_aircraft_type_from_adsbdb(icao):
+    """adsbdb.com（APIキー不要・無料）のaircraftエンドポイントから機種コードを取得する。
+
+    旧OpenSky metadata APIが廃止された代替の、機種ライブ取得元。
+    失敗時（オフライン・該当無し等）はNoneを返す。
+    """
+    if not icao:
+        return None
+    try:
+        resp = requests.get(
+            f"{_ADSBDB_API_BASE}/aircraft/{icao}",
+            timeout=config.ENRICH_TIMEOUT_SEC,
+        )
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        icao_type = (data.get("response", {}).get("aircraft") or {}).get("icao_type")
+        return (icao_type or "").strip().upper() or None
+    except (requests.RequestException, ValueError) as exc:
+        logger.debug("adsbdb機種取得に失敗（オフライン想定）: %s", exc)
+        return None
+
+
+def _fetch_route_from_adsbdb(callsign):
+    """adsbdb.com（APIキー不要・無料）のcallsignエンドポイントから出発地/目的地・運航会社を取得する。
+
+    OpenSky routesより情報が豊富（airline.icaoが直接得られる）。
+    失敗時（オフライン・該当無し等）は全てNoneを返す。
+    """
+    if not callsign:
+        return None, None, None
+    try:
+        resp = requests.get(
+            f"{_ADSBDB_API_BASE}/callsign/{callsign}",
+            timeout=config.ENRICH_TIMEOUT_SEC,
+        )
+        if resp.status_code != 200:
+            return None, None, None
+        data = resp.json().get("response", {}).get("flightroute")
+        if not data:
+            return None, None, None
+        origin = (data.get("origin") or {}).get("icao_code")
+        destination = (data.get("destination") or {}).get("icao_code")
+        airline_icao = (data.get("airline") or {}).get("icao")
+        return origin, destination, airline_icao
+    except (requests.RequestException, ValueError) as exc:
+        logger.debug("adsbdb route取得に失敗（オフライン想定）: %s", exc)
+    return None, None, None
 
 
 def _fetch_route_from_opensky(callsign):
@@ -206,10 +285,24 @@ _AIRLINE_JA = {
 
 
 def _guess_airline_from_callsign(callsign):
-    """コールサイン先頭3文字（ICAO航空会社コード）から簡易的にエアライン名（日本語）を推定する。"""
+    """コールサイン先頭3文字（ICAO航空会社コード）からエアライン名を推定する（完全オフライン）。
+
+    1. 手動キュレーション済み(_AIRLINE_JA) -> 日本語名
+    2. 世界航空会社データベース(OpenFlights由来, data/airlines_world.csv) -> 英語名
+    3. 該当なしならNone
+    """
     if not callsign or len(callsign) < 3:
         return None
-    return _AIRLINE_JA.get(callsign[:3].upper())
+    prefix = callsign[:3].upper()
+    return _airline_from_icao(prefix)
+
+
+def _airline_from_icao(icao_code):
+    """ICAO3文字の航空会社コードから名称を引く（手動キュレーション優先、世界DBフォールバック）。"""
+    if not icao_code:
+        return None
+    icao_code = icao_code.strip().upper()
+    return _AIRLINE_JA.get(icao_code) or _load_world_airlines_db().get(icao_code)
 
 
 # IATA(2文字)航空会社コード -> 日本語名。OpenSky routes APIの"operatorIata"はライブ取得できるため、
@@ -363,18 +456,25 @@ def format_aircraft_type(code):
 def enrich(icao, callsign, type_code=None):
     """機体情報を補完する。
 
-    OpenSkyから都度取得できる情報（出発地/目的地・運航会社）は毎回ライブ取得を試みる
-    （routes API）。キャッシュはオフライン時（通信不可）のフォールバックとしてのみ使い、
-    通信可能な間はキャッシュの有無に関わらず常に最新を取得し直す。
-    機種は機体メタデータAPIが廃止済み（410 Gone）のためライブ取得できず、ローカルCSV/
-    dump1090のtype_codeのみが情報源となる。
+    都度ライブ取得できる情報（出発地/目的地・運航会社・機種）は毎回取得し直す。
+    優先順位は adsbdb.com（APIキー不要、機種・運航会社・出発地/目的地を1回で取得でき
+    情報が豊富）-> OpenSky Network routes API（adsbdbで取得できなかった場合の補完）。
+    キャッシュはオフライン時（通信不可）等、両方とも取得できなかった場合の
+    フォールバックとしてのみ使う。
 
     type_code: dump1090/readsbが提供する機種コード（aircraft.jsonの"t"フィールド等）。
+    ローカルCSV/adsbdb双方で機種が取れなかった場合の最終フォールバックとして使用する。
     """
     icao = (icao or "").lower()
     cached = _get_cached(icao) or {}
 
-    origin_code, destination_code, operator_iata = _fetch_route_from_opensky(callsign)
+    adsbdb_origin, adsbdb_destination, adsbdb_airline_icao = _fetch_route_from_adsbdb(callsign)
+    adsbdb_type_code = _fetch_aircraft_type_from_adsbdb(icao)
+
+    origin_code, destination_code, operator_iata = adsbdb_origin, adsbdb_destination, None
+    if origin_code is None and destination_code is None:
+        # adsbdbでルートが取れなかった場合のみOpenSkyにフォールバックする
+        origin_code, destination_code, operator_iata = _fetch_route_from_opensky(callsign)
 
     # フィールドごとにライブ値→キャッシュ値の順でフォールバックする。
     # 「ライブ取得が一部失敗したら丸ごとキャッシュを使う」と、country/airlineのような
@@ -383,10 +483,11 @@ def enrich(icao, callsign, type_code=None):
     origin = format_airport(origin_code) or cached.get("origin")
     destination = format_airport(destination_code) or cached.get("destination")
 
-    fallback_type_code = _load_aircraft_type_db().get(icao) or type_code
+    fallback_type_code = adsbdb_type_code or _load_aircraft_type_db().get(icao) or type_code
     aircraft_type = format_aircraft_type(fallback_type_code) or cached.get("aircraft_type")
     airline = (
-        airline_from_iata(operator_iata)
+        _airline_from_icao(adsbdb_airline_icao)
+        or airline_from_iata(operator_iata)
         or _guess_airline_from_callsign(callsign)
         or cached.get("airline")
     )
