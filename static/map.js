@@ -205,13 +205,14 @@
 
         // 各行を<div>で独立したブロックにする（<br>とdisplay:blockを併用すると
         // 行間が二重になるため、改行は全てdiv境界のみで行う）
+        var altSpdType = ["高度: " + alt, "速度: " + spd, ac.aircraft_type]
+          .filter(Boolean)
+          .join(" / ");
+
         var lines = [
           "<div><strong>" + (ac.callsign || ac.icao) + "</strong>" + (airlineCountry ? " / " + airlineCountry : "") + "</div>",
+          "<div>" + altSpdType + "</div>",
         ];
-        if (ac.aircraft_type) {
-          lines.push("<div>" + ac.aircraft_type + "</div>");
-        }
-        lines.push("<div>高度: " + alt + " / 速度: " + spd + "</div>");
         if (ac.origin) {
           lines.push('<div class="route-line">発: ' + ac.origin + "</div>");
         }

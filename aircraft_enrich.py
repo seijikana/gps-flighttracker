@@ -215,26 +215,44 @@ def _fetch_route_from_opensky(callsign):
     return None, None, None
 
 
-_COUNTRY_RANGES = [
-    (0x800000, 0x83FFFF, "韓国"),
-    (0x840000, 0x87FFFF, "日本"),
-    (0x880000, 0x88FFFF, "タイ"),
-    (0x900000, 0x9FFFFF, "インド"),
-    (0x780000, 0x7BFFFF, "中国"),
-    (0xA00000, 0xAFFFFF, "アメリカ"),
-    (0xC00000, 0xC3FFFF, "カナダ"),
-    (0x3C0000, 0x3FFFFF, "ドイツ"),
-    (0x380000, 0x3BFFFF, "フランス"),
-    (0x400000, 0x43FFFF, "イギリス"),
-    (0x7C0000, 0x7FFFFF, "オーストラリア"),
-]
+_ICAO24_COUNTRY_RANGES_PATH = os.path.join(os.path.dirname(__file__), "data", "icao24_country_ranges.csv")
+_icao24_country_ranges = None  # [(low, high, country_iso2), ...] の昇順リスト（遅延ロード）
+
+
+def _load_icao24_country_ranges():
+    """ICAO24アドレスの国別割り当て範囲テーブルを読み込む。
+
+    ICAO Annex 10 Vol III付録の割り当て表をベースにしたtar1090(wiedehopf)の
+    flags.jsから抽出した網羅的なテーブル（約200範囲、ほぼ全世界をカバー）。
+    """
+    global _icao24_country_ranges
+    if _icao24_country_ranges is not None:
+        return _icao24_country_ranges
+    _icao24_country_ranges = []
+    if not os.path.exists(_ICAO24_COUNTRY_RANGES_PATH):
+        logger.warning("ICAO24国別範囲テーブルが見つかりません: %s", _ICAO24_COUNTRY_RANGES_PATH)
+        return _icao24_country_ranges
+    with open(_ICAO24_COUNTRY_RANGES_PATH, encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            try:
+                low = int(row["start_hex"], 16)
+                high = int(row["end_hex"], 16)
+            except (KeyError, ValueError):
+                continue
+            country_iso2 = (row.get("country_iso2") or "").strip().upper()
+            if country_iso2:
+                _icao24_country_ranges.append((low, high, country_iso2))
+    _icao24_country_ranges.sort()
+    logger.info("ICAO24国別範囲テーブルを読み込みました（%d件）", len(_icao24_country_ranges))
+    return _icao24_country_ranges
 
 
 def icao24_country(icao):
-    """ICAO24アドレスの先頭ビット割り当て範囲から所属国を簡易判定する（日本語名で返す）。
+    """ICAO24アドレスの割り当て範囲から所属国を判定する（日本語名で返す）。
 
-    ICAO Annex 10で国別にアドレス範囲が割り当てられている。主要国のみの
-    簡易テーブルであり、未知の範囲はNoneを返す。
+    ICAO Annex 10で国別にアドレス範囲が割り当てられている。約200範囲の
+    網羅的なテーブル（data/icao24_country_ranges.csv）を使用し、未知の
+    範囲（一部の予約/未割当ブロック）のみNoneを返す。
     """
     if not icao:
         return None
@@ -242,10 +260,17 @@ def icao24_country(icao):
         value = int(icao, 16)
     except ValueError:
         return None
-    for low, high, name in _COUNTRY_RANGES:
+    # 一部の範囲は入れ子（例: 中国の大枠の中に香港専用の狭い範囲がある）になっているため、
+    # 一致する範囲が複数あれば最も狭い（=最も具体的な）範囲を優先する。
+    best = None
+    for low, high, country_iso2 in _load_icao24_country_ranges():
         if low <= value <= high:
-            return name
-    return None
+            span = high - low
+            if best is None or span < best[0]:
+                best = (span, country_iso2)
+    if best is None:
+        return None
+    return COUNTRY_NAME_JA.get(best[1], best[1])
 
 
 _AIRLINE_JA = {
