@@ -191,29 +191,31 @@
     panel.innerHTML = list
       .map(function (ac) {
         var color = colorForAircraft(ac.icao);
-        var alt = ac.altitude_ft != null ? Math.round(ac.altitude_ft) + " ft" : "-";
+        var alt = ac.altitude_m != null ? Math.round(ac.altitude_m) + " m" : "-";
         var spd = ac.speed_kmh != null ? Math.round(ac.speed_kmh) + " km/h" : "-";
         var airlineCountry = [ac.airline, ac.country].filter(Boolean).join(" / ");
-        var routeType = [
-          ac.origin || ac.destination ? (ac.origin || "?") + " → " + (ac.destination || "?") : null,
-          ac.aircraft_type,
-        ]
-          .filter(Boolean)
-          .join(" / ");
+
+        var lines = [
+          "<strong>" + (ac.callsign || ac.icao) + "</strong>" + (airlineCountry ? " / " + airlineCountry : ""),
+        ];
+        if (ac.aircraft_type) {
+          lines.push(ac.aircraft_type);
+        }
+        lines.push("高度: " + alt + " / 速度: " + spd);
+        if (ac.origin) {
+          lines.push("発: " + ac.origin);
+        }
+        if (ac.destination) {
+          lines.push("→ 着: " + ac.destination);
+        }
+
         return (
           '<div class="aircraft-row" style="border-left-color:' +
           color +
-          '; color:' +
+          "; color:" +
           color +
-          '"><strong>' +
-          (ac.callsign || ac.icao) +
-          "</strong>" +
-          (airlineCountry ? " / " + airlineCountry : "") +
-          "<br>高度: " +
-          alt +
-          " / 速度: " +
-          spd +
-          (routeType ? "<br>" + routeType : "") +
+          '">' +
+          lines.join("<br>") +
           "</div>"
         );
       })

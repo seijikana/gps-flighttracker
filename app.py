@@ -75,6 +75,8 @@ def api_aircraft():
         item = dict(ac)
         if item.get("speed_kt") is not None:
             item["speed_kmh"] = item["speed_kt"] * 1.852
+        if item.get("altitude_ft") is not None:
+            item["altitude_m"] = item["altitude_ft"] * 0.3048
         info = item.pop("info", None) or {}
         item["airline"] = info.get("airline")
         item["country"] = info.get("country")
