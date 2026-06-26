@@ -229,7 +229,11 @@ def enrich(icao, callsign, type_code=None):
     """
     icao = (icao or "").lower()
     cached = _get_cached(icao)
-    if cached is not None:
+    # 初回検出時はコールサイン未確定（空文字）でキャッシュされることが多く、
+    # 後でコールサインが確定してもキャッシュが古いままだとエアライン/出発地目的地が
+    # 永久にnullになってしまう。現在のコールサインとキャッシュ時のものが異なる場合は
+    # キャッシュを無視して再取得する。
+    if cached is not None and (not callsign or cached.get("callsign") == callsign):
         return cached
 
     aircraft_type_code = _load_aircraft_type_db().get(icao) or type_code

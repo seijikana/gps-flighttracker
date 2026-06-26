@@ -103,13 +103,17 @@ class AdsbTracker:
                 # 既存機体の場合は補完済みの"info"を保持し、位置等のみ更新する
                 # （毎ポーリングで丸ごと上書きするとaircraft_enrichの非同期結果が消えてしまう）
                 existing_info = self._aircraft.get(icao, {}).get("info")
+                # readsb/dump1090-faは"alt_baro"/"gs"、古いdump1090系は"alt"/"spd"を使うため両対応する。
+                # alt_baroは地上にいる機体では数値ではなく"ground"文字列になるため数値以外は除外する。
+                alt_raw = ac.get("alt_baro", ac.get("alt"))
+                altitude_ft = alt_raw if isinstance(alt_raw, (int, float)) else None
                 self._aircraft[icao] = {
                     "icao": icao,
                     "callsign": (ac.get("flight") or "").strip(),
                     "lat": ac.get("lat"),
                     "lon": ac.get("lon"),
-                    "altitude_ft": ac.get("alt"),
-                    "speed_kt": ac.get("spd"),
+                    "altitude_ft": altitude_ft,
+                    "speed_kt": ac.get("gs", ac.get("spd")),
                     "track_deg": ac.get("track"),
                     "type_code": ac.get("t"),
                     "last_seen": now,

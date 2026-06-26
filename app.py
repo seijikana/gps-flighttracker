@@ -72,6 +72,9 @@ def api_aircraft():
     aircraft_list = tracker.get_current_aircraft()
     result = []
     for ac in aircraft_list:
+        # 位置情報が無い機体（Mode-S/ident信号のみでADS-B位置が未取得）は地図上に表示できないため除外する
+        if ac.get("lat") is None or ac.get("lon") is None:
+            continue
         item = dict(ac)
         if item.get("speed_kt") is not None:
             item["speed_kmh"] = item["speed_kt"] * 1.852

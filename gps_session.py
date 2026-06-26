@@ -166,11 +166,37 @@ class SessionManager:
     def __init__(self):
         self._gps = _make_gps_source()
         self._imu = _make_imu_source()
-        self._active_session_id = None
+        self._active_session_id = self._resume_active_session()
         self._last_moving_ts = None
         self._lock = threading.Lock()
         self._thread = None
         self._stop_event = threading.Event()
+
+    @staticmethod
+    def _resume_active_session():
+        """アプリ再起動時に既存のアクティブセッションを引き継ぐ。
+
+        毎回新規セッションを作ると、駐車モード等で再起動しただけで
+        セッションが分かれてしまう。is_active=1の中で最新のものを継続し、
+        過去の再起動で残った重複アクティブセッションは終了済みにする。
+        """
+        with db.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM sessions WHERE is_active = 1 ORDER BY started_at DESC"
+            )
+            active_ids = [row["id"] for row in cur.fetchall()]
+        if not active_ids:
+            return None
+        resumed_id = active_ids[0]
+        stale_ids = active_ids[1:]
+        if stale_ids:
+            now = time.time()
+            with db.cursor() as cur:
+                cur.executemany(
+                    "UPDATE sessions SET ended_at = ?, is_active = 0 WHERE id = ?",
+                    [(now, sid) for sid in stale_ids],
+                )
+        return resumed_id
 
     def start(self):
         self._thread = threading.Thread(target=self._run, daemon=True)
