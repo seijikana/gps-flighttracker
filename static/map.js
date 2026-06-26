@@ -211,10 +211,10 @@
         }
         lines.push("高度: " + alt + " / 速度: " + spd);
         if (ac.origin) {
-          lines.push("発: " + ac.origin);
+          lines.push('<span class="route-line">発: ' + ac.origin + "</span>");
         }
         if (ac.destination) {
-          lines.push("→ 着: " + ac.destination);
+          lines.push('<span class="route-line">→ 着: ' + ac.destination + "</span>");
         }
 
         return (

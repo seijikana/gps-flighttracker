@@ -20,8 +20,8 @@ html, body {
 }
 
 #sidebar {
-  flex: 0 0 30%;
-  max-width: 360px;
+  flex: 0 0 45%;
+  max-width: 560px;
   min-width: 220px;
   height: 100%;
   background: rgba(20, 20, 20, 0.95);
@@ -93,11 +93,19 @@ html, body {
 }
 
 .aircraft-row {
-  padding: 8px;
-  margin-bottom: 6px;
+  padding: 6px 8px;
+  margin-bottom: 4px;
   border-radius: 6px;
   border-left: 6px solid #888;
   background: rgba(255, 255, 255, 0.06);
+}
+
+/* 発地/着地は空港名(県名)等で長くなりがちなため、折り返さず収める */
+.route-line {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* 航空機アイコン: dump1090検出機を5倍サイズの色付きマーカーで表示し、

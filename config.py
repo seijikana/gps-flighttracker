@@ -18,7 +18,7 @@ IMU_VIBRATION_THRESHOLD_G = float(os.environ.get("IMU_VIBRATION_THRESHOLD_G", "0
 # ADS-B (dump1090 / readsb)
 DUMP1090_URL = os.environ.get("DUMP1090_URL", "http://localhost:8080/data/aircraft.json")
 ADSB_POLL_INTERVAL_SEC = float(os.environ.get("ADSB_POLL_INTERVAL_SEC", "2.0"))
-ADSB_AIRCRAFT_TIMEOUT_SEC = float(os.environ.get("ADSB_AIRCRAFT_TIMEOUT_SEC", "60.0"))
+ADSB_AIRCRAFT_TIMEOUT_SEC = float(os.environ.get("ADSB_AIRCRAFT_TIMEOUT_SEC", str(3 * 60)))
 
 # 機体情報補完
 AIRCRAFT_DB_CSV_PATH = os.environ.get("AIRCRAFT_DB_CSV_PATH", "")  # OpenSky aircraftDatabase.csv
