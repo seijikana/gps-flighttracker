@@ -33,6 +33,18 @@
   var aircraftMarkers = {}; // icao -> L.Marker
   var aircraftTrails = {}; // icao -> L.Polyline（前回位置と今回位置を直線で繋いだ軌跡）
   var aircraftColors = {}; // icao -> 割り当てられた色（アイコン/軌跡/リスト欄で共通）
+  var aircraftLastPos = {}; // icao -> 直前のlatlng（進行方向ベクトル計算用）
+  var aircraftHeadings = {}; // icao -> 直前→現在のベクトルから算出した進行方向(度)
+
+  // 2点間の方位角（北=0度、時計回り）を計算する
+  function bearingDeg(from, to) {
+    var lat1 = (from[0] * Math.PI) / 180;
+    var lat2 = (to[0] * Math.PI) / 180;
+    var dLon = ((to[1] - from[1]) * Math.PI) / 180;
+    var y = Math.sin(dLon) * Math.cos(lat2);
+    var x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+    return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+  }
 
   // 機体ごとに視認しやすい色を巡回割り当てする
   var COLOR_PALETTE = [
@@ -69,11 +81,19 @@
     });
   }
 
-  // 元のサイズ(20x20)から5倍(100x100)に拡大し、機体ごとの色を反映したアイコンを作る
-  function aircraftIcon(color) {
+  // 元のサイズ(20x20)から5倍(100x100)に拡大し、機体ごとの色・進行方向を反映したアイコンを作る。
+  // headingDeg: 軌跡の方向（直前→現在のベクトル）。✈グリフは右上(NE/45度)を向いて
+  // デザインされていることが多いため、北(0度)を正面とみなして-45度補正する。
+  function aircraftIcon(color, headingDeg) {
+    var rotate = (headingDeg || 0) - 45;
     return L.divIcon({
       className: "aircraft-icon",
-      html: '<span style="color:' + color + '">✈</span>',
+      html:
+        '<span style="color:' +
+        color +
+        "; display:inline-block; transform: rotate(" +
+        rotate +
+        'deg)">✈</span>',
       iconSize: [100, 100],
       iconAnchor: [50, 50],
     });
@@ -115,12 +135,21 @@
             (ac.aircraft_type ? " / " + ac.aircraft_type : "");
           var latlng = [ac.lat, ac.lon];
 
+          // 直前位置からのベクトルで進行方向を更新（ほぼ同一点の場合は前回の向きを保持）
+          var prevPos = aircraftLastPos[ac.icao];
+          if (prevPos && (prevPos[0] !== latlng[0] || prevPos[1] !== latlng[1])) {
+            aircraftHeadings[ac.icao] = bearingDeg(prevPos, latlng);
+          }
+          var heading = aircraftHeadings[ac.icao] || 0;
+          aircraftLastPos[ac.icao] = latlng;
+
           if (!aircraftMarkers[ac.icao]) {
-            aircraftMarkers[ac.icao] = L.marker(latlng, { icon: aircraftIcon(color) })
+            aircraftMarkers[ac.icao] = L.marker(latlng, { icon: aircraftIcon(color, heading) })
               .addTo(map)
               .bindTooltip(label);
           } else {
             aircraftMarkers[ac.icao].setLatLng(latlng);
+            aircraftMarkers[ac.icao].setIcon(aircraftIcon(color, heading));
             aircraftMarkers[ac.icao].setTooltipContent(label);
           }
 
@@ -141,6 +170,8 @@
               delete aircraftTrails[icao];
             }
             delete aircraftColors[icao];
+            delete aircraftLastPos[icao];
+            delete aircraftHeadings[icao];
           }
         });
         renderAircraftPanel(list);
@@ -161,9 +192,14 @@
       .map(function (ac) {
         var color = colorForAircraft(ac.icao);
         var alt = ac.altitude_ft != null ? Math.round(ac.altitude_ft) + " ft" : "-";
-        var spd = ac.speed_kt != null ? Math.round(ac.speed_kt) + " kt" : "-";
-        var route =
-          ac.origin || ac.destination ? (ac.origin || "?") + " → " + (ac.destination || "?") : "";
+        var spd = ac.speed_kmh != null ? Math.round(ac.speed_kmh) + " km/h" : "-";
+        var airlineCountry = [ac.airline, ac.country].filter(Boolean).join(" / ");
+        var routeType = [
+          ac.origin || ac.destination ? (ac.origin || "?") + " → " + (ac.destination || "?") : null,
+          ac.aircraft_type,
+        ]
+          .filter(Boolean)
+          .join(" / ");
         return (
           '<div class="aircraft-row" style="border-left-color:' +
           color +
@@ -171,15 +207,13 @@
           color +
           '"><strong>' +
           (ac.callsign || ac.icao) +
-          "</strong> " +
-          (ac.airline || "") +
-          " " +
-          (ac.aircraft_type || "") +
+          "</strong>" +
+          (airlineCountry ? " / " + airlineCountry : "") +
           "<br>高度: " +
           alt +
           " / 速度: " +
           spd +
-          (route ? "<br>" + route : "") +
+          (routeType ? "<br>" + routeType : "") +
           "</div>"
         );
       })

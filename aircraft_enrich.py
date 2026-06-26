@@ -57,15 +57,17 @@ def _save_cache(icao, info):
     with db.cursor() as cur:
         cur.execute(
             "INSERT INTO aircraft_info_cache "
-            "(icao, callsign, airline, aircraft_type, origin, destination, fetched_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "(icao, callsign, airline, country, aircraft_type, origin, destination, fetched_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(icao) DO UPDATE SET "
-            "callsign=excluded.callsign, airline=excluded.airline, aircraft_type=excluded.aircraft_type, "
+            "callsign=excluded.callsign, airline=excluded.airline, country=excluded.country, "
+            "aircraft_type=excluded.aircraft_type, "
             "origin=excluded.origin, destination=excluded.destination, fetched_at=excluded.fetched_at",
             (
                 icao,
                 info.get("callsign"),
                 info.get("airline"),
+                info.get("country"),
                 info.get("aircraft_type"),
                 info.get("origin"),
                 info.get("destination"),
@@ -95,9 +97,41 @@ def _fetch_route_from_opensky(callsign):
         route = data.get("route") or []
         if len(route) >= 2:
             return route[0], route[-1]
-    except requests.RequestException as exc:
+    except (requests.RequestException, ValueError) as exc:
+        # ValueError: resp.json()がJSONとして解釈できないレスポンス（オフライン時のプロキシ応答等）
         logger.debug("OpenSky route取得に失敗（オフライン想定）: %s", exc)
     return None, None
+
+
+def icao24_country(icao):
+    """ICAO24アドレスの先頭ビット割り当て範囲から所属国を簡易判定する。
+
+    ICAO Annex 10で国別にアドレス範囲が割り当てられている。主要国のみの
+    簡易テーブルであり、未知の範囲はNoneを返す。
+    """
+    if not icao:
+        return None
+    try:
+        value = int(icao, 16)
+    except ValueError:
+        return None
+    ranges = [
+        (0x800000, 0x83FFFF, "Republic of Korea"),
+        (0x840000, 0x87FFFF, "Japan"),
+        (0x880000, 0x88FFFF, "Thailand"),
+        (0x900000, 0x9FFFFF, "India"),
+        (0x780000, 0x7BFFFF, "China"),
+        (0xA00000, 0xAFFFFF, "United States"),
+        (0xC00000, 0xC3FFFF, "Canada"),
+        (0x3C0000, 0x3FFFFF, "Germany"),
+        (0x380000, 0x3BFFFF, "France"),
+        (0x400000, 0x43FFFF, "United Kingdom"),
+        (0x7C0000, 0x7FFFFF, "Australia"),
+    ]
+    for low, high, name in ranges:
+        if low <= value <= high:
+            return name
+    return None
 
 
 def _guess_airline_from_callsign(callsign):
@@ -128,14 +162,16 @@ def enrich(icao, callsign):
     aircraft_type = _load_aircraft_type_db().get(icao)
     origin, destination = _fetch_route_from_opensky(callsign)
     airline = _guess_airline_from_callsign(callsign)
+    country = icao24_country(icao)  # ICAO24アドレス範囲からの判定はオフラインでも可能
 
-    if aircraft_type is None and origin is None and airline is None:
+    if aircraft_type is None and origin is None and airline is None and country is None:
         # 何も補完できなかった（オフライン等）場合はキャッシュせず、次回再試行できるようにする
         return None
 
     info = {
         "callsign": callsign,
         "airline": airline,
+        "country": country,
         "aircraft_type": aircraft_type,
         "origin": origin,
         "destination": destination,

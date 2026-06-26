@@ -73,8 +73,11 @@ def api_aircraft():
     result = []
     for ac in aircraft_list:
         item = dict(ac)
+        if item.get("speed_kt") is not None:
+            item["speed_kmh"] = item["speed_kt"] * 1.852
         info = item.pop("info", None) or {}
         item["airline"] = info.get("airline")
+        item["country"] = info.get("country")
         item["aircraft_type"] = info.get("aircraft_type")
         item["origin"] = info.get("origin")
         item["destination"] = info.get("destination")

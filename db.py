@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS aircraft_info_cache (
     icao TEXT PRIMARY KEY,
     callsign TEXT,
     airline TEXT,
+    country TEXT,
     aircraft_type TEXT,
     origin TEXT,
     destination TEXT,
@@ -78,4 +79,8 @@ def cursor():
 def init_db():
     conn = get_conn()
     conn.executescript(SCHEMA)
+    try:
+        conn.execute("ALTER TABLE aircraft_info_cache ADD COLUMN country TEXT")
+    except sqlite3.OperationalError:
+        pass  # 既にcountry列が存在する場合
     conn.commit()

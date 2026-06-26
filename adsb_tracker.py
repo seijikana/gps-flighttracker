@@ -97,6 +97,9 @@ class AdsbTracker:
                 seen_icaos.add(icao)
                 if icao not in self._aircraft:
                     new_icaos.append(icao)
+                # 既存機体の場合は補完済みの"info"を保持し、位置等のみ更新する
+                # （毎ポーリングで丸ごと上書きするとaircraft_enrichの非同期結果が消えてしまう）
+                existing_info = self._aircraft.get(icao, {}).get("info")
                 self._aircraft[icao] = {
                     "icao": icao,
                     "callsign": (ac.get("flight") or "").strip(),
@@ -106,7 +109,7 @@ class AdsbTracker:
                     "speed_kt": ac.get("spd"),
                     "track_deg": ac.get("track"),
                     "last_seen": now,
-                    "info": None,
+                    "info": existing_info,
                 }
 
             # ロストした機体（タイムアウト超過）は「現在検出中」一覧から除外する
@@ -154,7 +157,11 @@ class AdsbTracker:
             with self._lock:
                 ac = self._aircraft.get(icao)
                 callsign = ac["callsign"] if ac else ""
-            info = aircraft_enrich.enrich(icao, callsign)
+            try:
+                info = aircraft_enrich.enrich(icao, callsign)
+            except Exception:
+                logger.exception("機体情報補完中に予期しないエラーが発生しました: %s", icao)
+                info = None
             with self._lock:
                 if icao in self._aircraft:
                     self._aircraft[icao]["info"] = info
