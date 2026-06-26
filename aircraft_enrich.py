@@ -1,8 +1,10 @@
 """ICAO24/コールサインから機種・エアライン・出発地/目的地を補完する。
 
-- 機種: ローカルにキャッシュしたOpenSky aircraftDatabase.csv（config.AIRCRAFT_DB_CSV_PATH）を参照。
-- エアライン・出発地/目的地: OpenSky Network REST APIから取得。
-- オフライン時（通信不可）は補完をスキップし、Noneを返す（呼び出し側はdump1090の情報のみで表示する）。
+- 出発地/目的地・運航会社: OpenSky Network のroutes APIから毎回ライブ取得する
+  （旧metadata/aircraft APIは廃止済み(410 Gone)のため使用不可）。
+- 機種: ローカルにキャッシュしたOpenSky aircraftDatabase.csv（config.AIRCRAFT_DB_CSV_PATH）
+  またはdump1090/readsbのtype_codeから補完（ライブAPI取得元が無いため）。
+- オフライン時（通信不可）はキャッシュ（直近に取得できた値）にフォールバックする。
 
 レート制限・利用規約に注意。OpenSky/FlightRadar24のAPI仕様は変更される可能性があるため、
 実運用前に最新の利用規約・エンドポイントを確認すること。
@@ -77,14 +79,15 @@ def _save_cache(icao, info):
 
 
 def _fetch_route_from_opensky(callsign):
-    """OpenSky Network のflights/aircraftやroutes系APIから出発地/目的地を推定する。
+    """OpenSky Network のroutes APIから出発地/目的地・運航会社IATAコードを取得する（毎回ライブ取得）。
 
-    OpenSky側の正式なroute検索APIは認証や時間範囲指定を要するため、ここでは
-    シンプルな例として失敗時はNoneを返すフォールバックのみ実装する。実運用では
-    認証情報・エンドポイントの確認が必要。
+    旧"metadata/aircraft/icao/{icao24}"エンドポイントは廃止済み（410 Gone）のため、
+    機種情報のライブ取得元としては使えない。routesエンドポイントは現在も稼働しており、
+    出発地/目的地に加えて"operatorIata"（運航会社のIATAコード）も得られるため、
+    エアラインのライブ判定にも利用する。失敗時（オフライン等）は全てNoneを返す。
     """
     if not callsign:
-        return None, None
+        return None, None, None
     try:
         resp = requests.get(
             f"{config.OPENSKY_API_BASE}/routes",
@@ -92,15 +95,17 @@ def _fetch_route_from_opensky(callsign):
             timeout=config.ENRICH_TIMEOUT_SEC,
         )
         if resp.status_code != 200:
-            return None, None
+            return None, None, None
         data = resp.json()
         route = data.get("route") or []
+        operator_iata = (data.get("operatorIata") or "").strip() or None
         if len(route) >= 2:
-            return route[0], route[-1]
+            return route[0], route[-1], operator_iata
+        return None, None, operator_iata
     except (requests.RequestException, ValueError) as exc:
         # ValueError: resp.json()がJSONとして解釈できないレスポンス（オフライン時のプロキシ応答等）
         logger.debug("OpenSky route取得に失敗（オフライン想定）: %s", exc)
-    return None, None
+    return None, None, None
 
 
 _COUNTRY_RANGES = [
@@ -155,6 +160,41 @@ def _guess_airline_from_callsign(callsign):
     return _AIRLINE_JA.get(callsign[:3].upper())
 
 
+# IATA(2文字)航空会社コード -> 日本語名。OpenSky routes APIの"operatorIata"はライブ取得できるため、
+# こちらが取得できればコールサイン推定より優先して使う。
+_AIRLINE_JA_IATA = {
+    "NH": "全日空(ANA)",
+    "JL": "日本航空(JAL)",
+    "BC": "スカイマーク(SKY)",
+    "MM": "ピーチ・アビエーション(APJ)",
+    "GK": "ジェットスター・ジャパン(JJP)",
+    "UA": "ユナイテッド航空(UAL)",
+    "DL": "デルタ航空(DAL)",
+    "AA": "アメリカン航空(AAL)",
+    "CI": "チャイナエアライン(CAL)",
+    "CX": "キャセイパシフィック航空(CPA)",
+    "KE": "大韓航空(KAL)",
+    "OZ": "アシアナ航空(AAR)",
+    "FX": "フェデックス(FDX)",
+    "PR": "フィリピン航空(PR)",
+    "TR": "スクート(TGW)",
+    "5J": "セブパシフィック航空(CEB)",
+    "VJ": "ベトジェットエア(VJC)",
+    "VN": "ベトナム航空(HVN)",
+    "TG": "タイ国際航空(THA)",
+    "SQ": "シンガポール航空(SIA)",
+    "MU": "中国東方航空(CES)",
+    "CZ": "中国南方航空(CSN)",
+}
+
+
+def airline_from_iata(operator_iata):
+    if not operator_iata:
+        return None
+    name = _AIRLINE_JA_IATA.get(operator_iata.upper())
+    return name or operator_iata  # 未収録IATAコードはそのまま表示（簡易テーブルのため要拡充）
+
+
 # 国内主要空港: ICAOコード -> (空港名, 県名)
 _DOMESTIC_AIRPORTS = {
     "RJAA": ("成田国際空港", "千葉県"),
@@ -179,6 +219,12 @@ _FOREIGN_AIRPORTS = {
     "RKSI": ("ソウル", "韓国"),
     "VHHH": ("香港", "中国"),
     "WSSS": ("シンガポール", "シンガポール"),
+    "RPLL": ("マニラ", "フィリピン"),
+    "VTBS": ("バンコク", "タイ"),
+    "WIII": ("ジャカルタ", "インドネシア"),
+    "VVTS": ("ホーチミン", "ベトナム"),
+    "ZSPD": ("上海", "中国"),
+    "ZGGG": ("広州", "中国"),
 }
 
 
@@ -222,30 +268,35 @@ def format_aircraft_type(code):
 
 
 def enrich(icao, callsign, type_code=None):
-    """機体情報を補完する。通信不可時はNoneを返し、呼び出し側はdump1090情報のみで表示する。
+    """機体情報を補完する。
+
+    OpenSkyから都度取得できる情報（出発地/目的地・運航会社）は毎回ライブ取得を試みる
+    （routes API）。キャッシュはオフライン時（通信不可）のフォールバックとしてのみ使い、
+    通信可能な間はキャッシュの有無に関わらず常に最新を取得し直す。
+    機種は機体メタデータAPIが廃止済み（410 Gone）のためライブ取得できず、ローカルCSV/
+    dump1090のtype_codeのみが情報源となる。
 
     type_code: dump1090/readsbが提供する機種コード（aircraft.jsonの"t"フィールド等）。
-    機体データベースCSVが無い/該当しない場合のフォールバックとして使用する。
     """
     icao = (icao or "").lower()
     cached = _get_cached(icao)
-    # 初回検出時はコールサイン未確定（空文字）でキャッシュされることが多く、
-    # 後でコールサインが確定してもキャッシュが古いままだとエアライン/出発地目的地が
-    # 永久にnullになってしまう。現在のコールサインとキャッシュ時のものが異なる場合は
-    # キャッシュを無視して再取得する。
-    if cached is not None and (not callsign or cached.get("callsign") == callsign):
+
+    origin_code, destination_code, operator_iata = _fetch_route_from_opensky(callsign)
+    live_fetch_failed = origin_code is None and destination_code is None and operator_iata is None
+
+    if live_fetch_failed and cached is not None:
+        # オフライン等でライブ取得が一切できなかった場合のみ、最後に取得できた値を使う
         return cached
 
-    aircraft_type_code = _load_aircraft_type_db().get(icao) or type_code
-    aircraft_type = format_aircraft_type(aircraft_type_code)
-    origin_code, destination_code = _fetch_route_from_opensky(callsign)
+    fallback_type_code = _load_aircraft_type_db().get(icao) or type_code
+    aircraft_type = format_aircraft_type(fallback_type_code)
     origin = format_airport(origin_code)
     destination = format_airport(destination_code)
-    airline = _guess_airline_from_callsign(callsign)
+    airline = airline_from_iata(operator_iata) or _guess_airline_from_callsign(callsign)
     country = icao24_country(icao)  # ICAO24アドレス範囲からの判定はオフラインでも可能
 
     if aircraft_type is None and origin is None and airline is None and country is None:
-        # 何も補完できなかった（オフライン等）場合はキャッシュせず、次回再試行できるようにする
+        # 何も補完できなかった場合はキャッシュせず、次回再試行できるようにする
         return None
 
     info = {
