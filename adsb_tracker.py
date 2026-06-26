@@ -59,11 +59,13 @@ class AdsbTracker:
 
     _mock_state = None
 
+    _MOCK_TYPE_CODES = ["B738", "B77W", "B789", "A320", "A321", "A359", "B763", "A333"]
+
     def _fetch_mock(self):
         if self._mock_state is None:
             self._mock_state = [
-                {"hex": "abc123", "flight": "ANA123", "lat": 34.70, "lon": 135.50, "alt": 32000, "spd": 420, "track": 90},
-                {"hex": "def456", "flight": "JAL456", "lat": 34.65, "lon": 135.55, "alt": 28000, "spd": 380, "track": 270},
+                {"hex": "abc123", "flight": "ANA123", "lat": 34.70, "lon": 135.50, "alt": 32000, "spd": 420, "track": 90, "t": "B738"},
+                {"hex": "def456", "flight": "JAL456", "lat": 34.65, "lon": 135.55, "alt": 28000, "spd": 380, "track": 270, "t": "B789"},
             ]
         for ac in self._mock_state:
             ac["lat"] += random.uniform(-0.01, 0.01)
@@ -80,6 +82,7 @@ class AdsbTracker:
                     "alt": random.choice([15000, 25000, 35000]),
                     "spd": random.uniform(250, 450),
                     "track": random.uniform(0, 360),
+                    "t": random.choice(self._MOCK_TYPE_CODES),
                 }
             )
         return list(self._mock_state)
@@ -108,6 +111,7 @@ class AdsbTracker:
                     "altitude_ft": ac.get("alt"),
                     "speed_kt": ac.get("spd"),
                     "track_deg": ac.get("track"),
+                    "type_code": ac.get("t"),
                     "last_seen": now,
                     "info": existing_info,
                 }
@@ -157,8 +161,9 @@ class AdsbTracker:
             with self._lock:
                 ac = self._aircraft.get(icao)
                 callsign = ac["callsign"] if ac else ""
+                type_code = ac.get("type_code") if ac else None
             try:
-                info = aircraft_enrich.enrich(icao, callsign)
+                info = aircraft_enrich.enrich(icao, callsign, type_code=type_code)
             except Exception:
                 logger.exception("機体情報補完中に予期しないエラーが発生しました: %s", icao)
                 info = None

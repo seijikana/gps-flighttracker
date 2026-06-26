@@ -103,8 +103,23 @@ def _fetch_route_from_opensky(callsign):
     return None, None
 
 
+_COUNTRY_RANGES = [
+    (0x800000, 0x83FFFF, "韓国"),
+    (0x840000, 0x87FFFF, "日本"),
+    (0x880000, 0x88FFFF, "タイ"),
+    (0x900000, 0x9FFFFF, "インド"),
+    (0x780000, 0x7BFFFF, "中国"),
+    (0xA00000, 0xAFFFFF, "アメリカ合衆国"),
+    (0xC00000, 0xC3FFFF, "カナダ"),
+    (0x3C0000, 0x3FFFFF, "ドイツ"),
+    (0x380000, 0x3BFFFF, "フランス"),
+    (0x400000, 0x43FFFF, "イギリス"),
+    (0x7C0000, 0x7FFFFF, "オーストラリア"),
+]
+
+
 def icao24_country(icao):
-    """ICAO24アドレスの先頭ビット割り当て範囲から所属国を簡易判定する。
+    """ICAO24アドレスの先頭ビット割り当て範囲から所属国を簡易判定する（日本語名で返す）。
 
     ICAO Annex 10で国別にアドレス範囲が割り当てられている。主要国のみの
     簡易テーブルであり、未知の範囲はNoneを返す。
@@ -115,52 +130,113 @@ def icao24_country(icao):
         value = int(icao, 16)
     except ValueError:
         return None
-    ranges = [
-        (0x800000, 0x83FFFF, "Republic of Korea"),
-        (0x840000, 0x87FFFF, "Japan"),
-        (0x880000, 0x88FFFF, "Thailand"),
-        (0x900000, 0x9FFFFF, "India"),
-        (0x780000, 0x7BFFFF, "China"),
-        (0xA00000, 0xAFFFFF, "United States"),
-        (0xC00000, 0xC3FFFF, "Canada"),
-        (0x3C0000, 0x3FFFFF, "Germany"),
-        (0x380000, 0x3BFFFF, "France"),
-        (0x400000, 0x43FFFF, "United Kingdom"),
-        (0x7C0000, 0x7FFFFF, "Australia"),
-    ]
-    for low, high, name in ranges:
+    for low, high, name in _COUNTRY_RANGES:
         if low <= value <= high:
             return name
     return None
 
 
+_AIRLINE_JA = {
+    "ANA": "全日空(ANA)",
+    "JAL": "日本航空(JAL)",
+    "SKY": "スカイマーク(SKY)",
+    "APJ": "ピーチ・アビエーション(APJ)",
+    "JJP": "ジェットスター・ジャパン(JJP)",
+    "UAL": "ユナイテッド航空(UAL)",
+    "DAL": "デルタ航空(DAL)",
+    "AAL": "アメリカン航空(AAL)",
+}
+
+
 def _guess_airline_from_callsign(callsign):
-    """コールサイン先頭3文字（ICAO航空会社コード）から簡易的にエアライン名を推定する。"""
+    """コールサイン先頭3文字（ICAO航空会社コード）から簡易的にエアライン名（日本語）を推定する。"""
     if not callsign or len(callsign) < 3:
         return None
-    prefix = callsign[:3].upper()
-    known = {
-        "ANA": "All Nippon Airways",
-        "JAL": "Japan Airlines",
-        "SKY": "Skymark Airlines",
-        "APJ": "Peach Aviation",
-        "JJP": "Jetstar Japan",
-        "UAL": "United Airlines",
-        "DAL": "Delta Air Lines",
-        "AAL": "American Airlines",
-    }
-    return known.get(prefix)
+    return _AIRLINE_JA.get(callsign[:3].upper())
 
 
-def enrich(icao, callsign):
-    """機体情報を補完する。通信不可時はNoneを返し、呼び出し側はdump1090情報のみで表示する。"""
+# 国内主要空港: ICAOコード -> (空港名, 県名)
+_DOMESTIC_AIRPORTS = {
+    "RJAA": ("成田国際空港", "千葉県"),
+    "RJTT": ("東京国際空港(羽田)", "東京都"),
+    "RJBB": ("関西国際空港", "大阪府"),
+    "RJOO": ("大阪国際空港(伊丹)", "大阪府"),
+    "RJGG": ("中部国際空港", "愛知県"),
+    "RJFF": ("福岡空港", "福岡県"),
+    "ROAH": ("那覇空港", "沖縄県"),
+    "RJCC": ("新千歳空港", "北海道"),
+    "RJOA": ("広島空港", "広島県"),
+    "RJNK": ("小松空港", "石川県"),
+}
+
+# 主要海外空港: ICAOコード -> (都市名, 国名)
+_FOREIGN_AIRPORTS = {
+    "KIAH": ("ヒューストン", "アメリカ合衆国"),
+    "KJFK": ("ニューヨーク", "アメリカ合衆国"),
+    "KLAX": ("ロサンゼルス", "アメリカ合衆国"),
+    "EGLL": ("ロンドン", "イギリス"),
+    "ZBAA": ("北京", "中国"),
+    "RKSI": ("ソウル", "韓国"),
+    "VHHH": ("香港", "中国"),
+    "WSSS": ("シンガポール", "シンガポール"),
+}
+
+
+def format_airport(code):
+    """空港コードを「空港名(県名)」（国内）または「国名(都市)」（海外）の表記に変換する。
+
+    未収録の空港コードは元のコードをそのまま返す（簡易テーブルのため要拡充）。
+    """
+    if not code:
+        return None
+    code = code.upper()
+    if code in _DOMESTIC_AIRPORTS:
+        name, pref = _DOMESTIC_AIRPORTS[code]
+        return f"{name}({pref})"
+    if code in _FOREIGN_AIRPORTS:
+        city, country = _FOREIGN_AIRPORTS[code]
+        return f"{country}({city})"
+    return code
+
+
+# ICAO機種コード -> 日本語の機種名
+_AIRCRAFT_TYPE_JA = {
+    "B738": "ボーイング737-800",
+    "B739": "ボーイング737-900",
+    "B77W": "ボーイング777-300ER",
+    "B772": "ボーイング777-200",
+    "B789": "ボーイング787-9",
+    "B788": "ボーイング787-8",
+    "B763": "ボーイング767-300",
+    "A320": "エアバスA320",
+    "A321": "エアバスA321",
+    "A359": "エアバスA350-900",
+    "A333": "エアバスA330-300",
+}
+
+
+def format_aircraft_type(code):
+    if not code:
+        return None
+    return _AIRCRAFT_TYPE_JA.get(code.upper(), code)
+
+
+def enrich(icao, callsign, type_code=None):
+    """機体情報を補完する。通信不可時はNoneを返し、呼び出し側はdump1090情報のみで表示する。
+
+    type_code: dump1090/readsbが提供する機種コード（aircraft.jsonの"t"フィールド等）。
+    機体データベースCSVが無い/該当しない場合のフォールバックとして使用する。
+    """
     icao = (icao or "").lower()
     cached = _get_cached(icao)
     if cached is not None:
         return cached
 
-    aircraft_type = _load_aircraft_type_db().get(icao)
-    origin, destination = _fetch_route_from_opensky(callsign)
+    aircraft_type_code = _load_aircraft_type_db().get(icao) or type_code
+    aircraft_type = format_aircraft_type(aircraft_type_code)
+    origin_code, destination_code = _fetch_route_from_opensky(callsign)
+    origin = format_airport(origin_code)
+    destination = format_airport(destination_code)
     airline = _guess_airline_from_callsign(callsign)
     country = icao24_country(icao)  # ICAO24アドレス範囲からの判定はオフラインでも可能
 
