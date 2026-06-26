@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>GPS Flight Tracker</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<div id="map"></div>
+
+<div id="panel">
+  <div id="panel-header">
+    <button id="toggle-panel">☰ セッション</button>
+    <button id="follow-toggle" class="active">自動追従: ON</button>
+  </div>
+  <div id="session-list"></div>
+</div>
+
+<div id="aircraft-info" class="hidden"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/static/map.js"></script>
+</body>
+</html>
