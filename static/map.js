@@ -31,6 +31,23 @@
   var currentMarker = L.circleMarker([0, 0], { radius: 7, color: "#4ea1ff", fillOpacity: 1 });
   var historyPolyline = null;
   var aircraftMarkers = {}; // icao -> L.Marker
+  var aircraftTrails = {}; // icao -> L.Polyline（前回位置と今回位置を直線で繋いだ軌跡）
+  var aircraftColors = {}; // icao -> 割り当てられた色（アイコン/軌跡/リスト欄で共通）
+
+  // 機体ごとに視認しやすい色を巡回割り当てする
+  var COLOR_PALETTE = [
+    "#ff4e4e", "#4ea1ff", "#4eff8f", "#ffd24e", "#c44eff",
+    "#ff8c4e", "#4effe9", "#ff4ea1", "#9bff4e", "#4e6bff",
+  ];
+  var nextColorIndex = 0;
+
+  function colorForAircraft(icao) {
+    if (!aircraftColors[icao]) {
+      aircraftColors[icao] = COLOR_PALETTE[nextColorIndex % COLOR_PALETTE.length];
+      nextColorIndex += 1;
+    }
+    return aircraftColors[icao];
+  }
 
   var followBtn = document.getElementById("follow-toggle");
   followBtn.addEventListener("click", function () {
@@ -52,11 +69,13 @@
     });
   }
 
-  function aircraftIcon() {
+  // 元のサイズ(20x20)から5倍(100x100)に拡大し、機体ごとの色を反映したアイコンを作る
+  function aircraftIcon(color) {
     return L.divIcon({
       className: "aircraft-icon",
-      html: "✈",
-      iconSize: [20, 20],
+      html: '<span style="color:' + color + '">✈</span>',
+      iconSize: [100, 100],
+      iconAnchor: [50, 50],
     });
   }
 
@@ -89,24 +108,39 @@
         list.forEach(function (ac) {
           if (ac.lat == null || ac.lon == null) return;
           seen[ac.icao] = true;
+          var color = colorForAircraft(ac.icao);
           var label =
             (ac.callsign || ac.icao) +
             (ac.airline ? " / " + ac.airline : "") +
             (ac.aircraft_type ? " / " + ac.aircraft_type : "");
+          var latlng = [ac.lat, ac.lon];
+
           if (!aircraftMarkers[ac.icao]) {
-            aircraftMarkers[ac.icao] = L.marker([ac.lat, ac.lon], { icon: aircraftIcon() })
+            aircraftMarkers[ac.icao] = L.marker(latlng, { icon: aircraftIcon(color) })
               .addTo(map)
               .bindTooltip(label);
           } else {
-            aircraftMarkers[ac.icao].setLatLng([ac.lat, ac.lon]);
+            aircraftMarkers[ac.icao].setLatLng(latlng);
             aircraftMarkers[ac.icao].setTooltipContent(label);
           }
+
+          // 前回位置と今回位置を直線で繋いで軌跡として残す
+          if (!aircraftTrails[ac.icao]) {
+            aircraftTrails[ac.icao] = L.polyline([latlng], { color: color, weight: 3 }).addTo(map);
+          } else {
+            aircraftTrails[ac.icao].addLatLng(latlng);
+          }
         });
-        // 現在検出中の機体のみ表示（ロストした機体のマーカーは除去）
+        // 現在検出されない機体はマーカー・軌跡とも消す
         Object.keys(aircraftMarkers).forEach(function (icao) {
           if (!seen[icao]) {
             map.removeLayer(aircraftMarkers[icao]);
             delete aircraftMarkers[icao];
+            if (aircraftTrails[icao]) {
+              map.removeLayer(aircraftTrails[icao]);
+              delete aircraftTrails[icao];
+            }
+            delete aircraftColors[icao];
           }
         });
         renderAircraftPanel(list);
@@ -125,12 +159,17 @@
     panel.classList.remove("hidden");
     panel.innerHTML = list
       .map(function (ac) {
+        var color = colorForAircraft(ac.icao);
         var alt = ac.altitude_ft != null ? Math.round(ac.altitude_ft) + " ft" : "-";
         var spd = ac.speed_kt != null ? Math.round(ac.speed_kt) + " kt" : "-";
         var route =
           ac.origin || ac.destination ? (ac.origin || "?") + " → " + (ac.destination || "?") : "";
         return (
-          '<div class="aircraft-row"><strong>' +
+          '<div class="aircraft-row" style="border-left-color:' +
+          color +
+          '; color:' +
+          color +
+          '"><strong>' +
           (ac.callsign || ac.icao) +
           "</strong> " +
           (ac.airline || "") +
