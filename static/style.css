@@ -109,3 +109,11 @@ html, body {
   text-shadow: 0 0 3px #000, 0 0 3px #000;
   transform-origin: center center;
 }
+
+/* 自車の現在地マーカー（車のアイコン） */
+.car-icon {
+  font-size: 32px;
+  line-height: 48px;
+  text-align: center;
+  text-shadow: 0 0 3px #000, 0 0 3px #000;
+}

@@ -27,8 +27,16 @@
 
   var followEnabled = true;
   var currentSessionId = null;
-  var currentPolyline = L.polyline([], { color: "#4ea1ff", weight: 4 }).addTo(map);
-  var currentMarker = L.circleMarker([0, 0], { radius: 7, color: "#4ea1ff", fillOpacity: 1 });
+  // 自車の走行軌跡は赤の太線、現在地は車のアイコンで表示する
+  var CAR_COLOR = "#ff2222";
+  var currentPolyline = L.polyline([], { color: CAR_COLOR, weight: 6 }).addTo(map);
+  var carIcon = L.divIcon({
+    className: "car-icon",
+    html: '<span style="color:' + CAR_COLOR + '">🚗</span>',
+    iconSize: [48, 48],
+    iconAnchor: [24, 24],
+  });
+  var currentMarker = L.marker([0, 0], { icon: carIcon });
   var historyPolyline = null;
   var aircraftMarkers = {}; // icao -> L.Marker
   var aircraftTrails = {}; // icao -> L.Polyline（前回位置と今回位置を直線で繋いだ軌跡）
