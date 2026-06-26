@@ -92,6 +92,8 @@ class AdsbTracker:
         seen_icaos = set()
         new_icaos = []
 
+        callsign_resolved_icaos = []
+
         with self._lock:
             for ac in aircraft_list:
                 icao = ac.get("hex")
@@ -104,6 +106,12 @@ class AdsbTracker:
                 # （毎ポーリングで丸ごと上書きするとaircraft_enrichの非同期結果が消えてしまう）
                 existing = self._aircraft.get(icao, {})
                 existing_info = existing.get("info")
+                new_callsign = (ac.get("flight") or "").strip()
+                # 初回検出時はコールサインが未確定（空文字）で補完を試みており、その時点では
+                # 出発地/目的地・運航会社を取得できない。コールサインが後から確定した時点で
+                # 再度補完を試みる（新規機体でない場合のみ。新規はnew_icaosで既に処理される）。
+                if icao in self._aircraft and not existing.get("callsign") and new_callsign:
+                    callsign_resolved_icaos.append(icao)
                 # readsb/dump1090-faは"alt_baro"/"gs"、古いdump1090系は"alt"/"spd"を使うため両対応する。
                 # alt_baroは地上にいる機体では数値ではなく"ground"文字列になるため数値以外は除外する。
                 alt_raw = ac.get("alt_baro", ac.get("alt"))
@@ -117,7 +125,7 @@ class AdsbTracker:
                 lon = new_lon if new_lon is not None else existing.get("lon")
                 self._aircraft[icao] = {
                     "icao": icao,
-                    "callsign": (ac.get("flight") or "").strip(),
+                    "callsign": new_callsign,
                     "lat": lat,
                     "lon": lon,
                     "altitude_ft": altitude_ft,
@@ -144,6 +152,8 @@ class AdsbTracker:
 
         for icao in new_icaos:
             self._on_new_aircraft(icao)
+        for icao in callsign_resolved_icaos:
+            self._trigger_enrich(icao)
 
     @staticmethod
     def _record_track_point(icao, session_id, ts, data_):
@@ -168,6 +178,15 @@ class AdsbTracker:
     def _on_new_aircraft(self, icao):
         logger.info("新規機体を検出しました: %s", icao)
         notify_sound.play_new_aircraft_sound()
+        self._trigger_enrich(icao)
+
+    def _trigger_enrich(self, icao):
+        """機体情報補完をバックグラウンドで実行する。
+
+        新規機体検出時に加え、検出時点ではコールサインが未確定で出発地/目的地・
+        運航会社が取得できなかった機体について、コールサインが後から確定した際の
+        再試行にも使う。
+        """
 
         def _enrich():
             with self._lock:

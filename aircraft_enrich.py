@@ -147,9 +147,33 @@ _AIRLINE_JA = {
     "SKY": "スカイマーク(SKY)",
     "APJ": "ピーチ・アビエーション(APJ)",
     "JJP": "ジェットスター・ジャパン(JJP)",
+    "ADO": "AIRDO(ADO)",
+    "SFJ": "スターフライヤー(SFJ)",
+    "SNJ": "ソラシドエア(SNJ)",
+    "IBX": "アイベックスエアラインズ(IBX)",
     "UAL": "ユナイテッド航空(UAL)",
     "DAL": "デルタ航空(DAL)",
     "AAL": "アメリカン航空(AAL)",
+    "FDX": "フェデックス(FDX)",
+    "CAL": "チャイナエアライン(CAL)",
+    "CPA": "キャセイパシフィック航空(CPA)",
+    "CSN": "中国南方航空(CSN)",
+    "CES": "中国東方航空(CES)",
+    "CCA": "中国国際航空(CCA)",
+    "KAL": "大韓航空(KAL)",
+    "AAR": "アシアナ航空(AAR)",
+    "AIC": "インド航空(AIC)",
+    "AIQ": "インディゴ(IGO)",
+    "TTW": "タイガーエア台湾(TTW)",
+    "EVA": "エバー航空(EVA)",
+    "SIA": "シンガポール航空(SIA)",
+    "THA": "タイ国際航空(THA)",
+    "PAL": "フィリピン航空(PAL)",
+    "CEB": "セブパシフィック航空(CEB)",
+    "VJC": "ベトジェットエア(VJC)",
+    "HVN": "ベトナム航空(HVN)",
+    "QFA": "カンタス航空(QFA)",
+    "GIA": "ガルーダ・インドネシア航空(GIA)",
 }
 
 
@@ -207,6 +231,38 @@ _DOMESTIC_AIRPORTS = {
     "RJCC": ("新千歳空港", "北海道"),
     "RJOA": ("広島空港", "広島県"),
     "RJNK": ("小松空港", "石川県"),
+    "RJCH": ("函館空港", "北海道"),
+    "RJCK": ("釧路空港", "北海道"),
+    "RJSS": ("仙台空港", "宮城県"),
+    "RJSK": ("秋田空港", "秋田県"),
+    "RJSN": ("新潟空港", "新潟県"),
+    "RJSC": ("山形空港", "山形県"),
+    "RJAH": ("百里空港(茨城)", "茨城県"),
+    "RJSF": ("福島空港", "福島県"),
+    "RJOT": ("高松空港", "香川県"),
+    "RJOM": ("松山空港", "愛媛県"),
+    "RJOK": ("高知空港", "高知県"),
+    "RJOH": ("徳島空港", "徳島県"),
+    "RJFU": ("長崎空港", "長崎県"),
+    "RJFK": ("鹿児島空港", "鹿児島県"),
+    "RJFM": ("宮崎空港", "宮崎県"),
+    "RJFO": ("大分空港", "大分県"),
+    "RJFT": ("熊本空港", "熊本県"),
+    "RJFS": ("佐賀空港", "佐賀県"),
+    "RJOC": ("美保空港(米子)", "鳥取県"),
+    "RJOB": ("岡山空港", "岡山県"),
+    "RJBD": ("出雲空港", "島根県"),
+    "RJNT": ("富山空港", "富山県"),
+    "RJAF": ("福井空港", "福井県"),
+    "RJNA": ("名古屋空港(小牧)", "愛知県"),
+    "RJTA": ("厚木航空基地", "神奈川県"),
+    "RJSA": ("青森空港", "青森県"),
+    "RJSM": ("三沢空港", "青森県"),
+    "RJSY": ("庄内空港", "山形県"),
+    "RJOR": ("岩国空港", "山口県"),
+    "RJDC": ("大村空港(長崎)", "長崎県"),
+    "ROIG": ("石垣空港", "沖縄県"),
+    "ROMY": ("宮古空港", "沖縄県"),
 }
 
 # 主要海外空港: ICAOコード -> (都市名, 国名)
@@ -279,21 +335,25 @@ def enrich(icao, callsign, type_code=None):
     type_code: dump1090/readsbが提供する機種コード（aircraft.jsonの"t"フィールド等）。
     """
     icao = (icao or "").lower()
-    cached = _get_cached(icao)
+    cached = _get_cached(icao) or {}
 
     origin_code, destination_code, operator_iata = _fetch_route_from_opensky(callsign)
-    live_fetch_failed = origin_code is None and destination_code is None and operator_iata is None
 
-    if live_fetch_failed and cached is not None:
-        # オフライン等でライブ取得が一切できなかった場合のみ、最後に取得できた値を使う
-        return cached
+    # フィールドごとにライブ値→キャッシュ値の順でフォールバックする。
+    # 「ライブ取得が一部失敗したら丸ごとキャッシュを使う」と、country/airlineのような
+    # 本来オフラインでも毎回計算できる値まで古いキャッシュに固定されてしまうため、
+    # ルート（出発地/目的地）以外は基本的に毎回フレッシュに計算する。
+    origin = format_airport(origin_code) or cached.get("origin")
+    destination = format_airport(destination_code) or cached.get("destination")
 
     fallback_type_code = _load_aircraft_type_db().get(icao) or type_code
-    aircraft_type = format_aircraft_type(fallback_type_code)
-    origin = format_airport(origin_code)
-    destination = format_airport(destination_code)
-    airline = airline_from_iata(operator_iata) or _guess_airline_from_callsign(callsign)
-    country = icao24_country(icao)  # ICAO24アドレス範囲からの判定はオフラインでも可能
+    aircraft_type = format_aircraft_type(fallback_type_code) or cached.get("aircraft_type")
+    airline = (
+        airline_from_iata(operator_iata)
+        or _guess_airline_from_callsign(callsign)
+        or cached.get("airline")
+    )
+    country = icao24_country(icao) or cached.get("country")  # ICAO24範囲判定はオフラインでも可能
 
     if aircraft_type is None and origin is None and airline is None and country is None:
         # 何も補完できなかった場合はキャッシュせず、次回再試行できるようにする
