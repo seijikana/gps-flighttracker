@@ -93,11 +93,29 @@ html, body {
 }
 
 .aircraft-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 6px 8px;
   margin-bottom: 4px;
   border-radius: 6px;
   border-left: 6px solid #888;
   background: rgba(255, 255, 255, 0.06);
+}
+
+.aircraft-row-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 機体の代表写真（adsbdb.com提供、無い場合は表示しない） */
+.aircraft-row-photo {
+  flex: 0 0 auto;
+  width: 96px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: #222;
 }
 
 /* 発地/着地は空港名(県名)等で長くなりがちなため、折り返さず収める */

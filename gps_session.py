@@ -168,6 +168,7 @@ class SessionManager:
         self._imu = _make_imu_source()
         self._active_session_id = self._resume_active_session()
         self._last_moving_ts = None
+        self._last_recorded_ts = 0.0
         self._lock = threading.Lock()
         self._thread = None
         self._stop_event = threading.Event()
@@ -236,7 +237,12 @@ class SessionManager:
                 self._active_session_id = self._create_session(now)
                 self._last_moving_ts = now
 
-            self._record_point(self._active_session_id, fix)
+            # GR7-10HZは10Hzで位置を返すが、毎回SQLiteに書き込むとWALファイルが
+            # 無制限に肥大化しディスクI/Oエラーの原因になる（実際に発生した事故への対策）。
+            # 走行軌跡の用途では1秒間隔で十分なため、書き込み頻度を抑える。
+            if now - self._last_recorded_ts >= config.SESSION_POINT_MIN_INTERVAL_SEC:
+                self._record_point(self._active_session_id, fix)
+                self._last_recorded_ts = now
 
     @staticmethod
     def _create_session(ts):

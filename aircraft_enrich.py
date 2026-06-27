@@ -113,20 +113,27 @@ def _save_cache(icao, info):
     with db.cursor() as cur:
         cur.execute(
             "INSERT INTO aircraft_info_cache "
-            "(icao, callsign, airline, country, aircraft_type, origin, destination, fetched_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "(icao, callsign, airline, country, country_flag, aircraft_type, "
+            "origin, origin_flag, destination, destination_flag, photo_url, fetched_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(icao) DO UPDATE SET "
             "callsign=excluded.callsign, airline=excluded.airline, country=excluded.country, "
-            "aircraft_type=excluded.aircraft_type, "
-            "origin=excluded.origin, destination=excluded.destination, fetched_at=excluded.fetched_at",
+            "country_flag=excluded.country_flag, aircraft_type=excluded.aircraft_type, "
+            "origin=excluded.origin, origin_flag=excluded.origin_flag, "
+            "destination=excluded.destination, destination_flag=excluded.destination_flag, "
+            "photo_url=excluded.photo_url, fetched_at=excluded.fetched_at",
             (
                 icao,
                 info.get("callsign"),
                 info.get("airline"),
                 info.get("country"),
+                info.get("country_flag"),
                 info.get("aircraft_type"),
                 info.get("origin"),
+                info.get("origin_flag"),
                 info.get("destination"),
+                info.get("destination_flag"),
+                info.get("photo_url"),
                 time.time(),
             ),
         )
@@ -135,27 +142,29 @@ def _save_cache(icao, info):
 _ADSBDB_API_BASE = "https://api.adsbdb.com/v0"
 
 
-def _fetch_aircraft_type_from_adsbdb(icao):
-    """adsbdb.com（APIキー不要・無料）のaircraftエンドポイントから機種コードを取得する。
+def _fetch_aircraft_info_from_adsbdb(icao):
+    """adsbdb.com（APIキー不要・無料）のaircraftエンドポイントから機種コード・代表写真URLを取得する。
 
     旧OpenSky metadata APIが廃止された代替の、機種ライブ取得元。
-    失敗時（オフライン・該当無し等）はNoneを返す。
+    写真は機体ごとに登録があれば返る（無ければNone、必須ではない）。
+    失敗時（オフライン・該当無し等）は(None, None)を返す。
     """
     if not icao:
-        return None
+        return None, None
     try:
         resp = requests.get(
             f"{_ADSBDB_API_BASE}/aircraft/{icao}",
             timeout=config.ENRICH_TIMEOUT_SEC,
         )
         if resp.status_code != 200:
-            return None
-        data = resp.json()
-        icao_type = (data.get("response", {}).get("aircraft") or {}).get("icao_type")
-        return (icao_type or "").strip().upper() or None
+            return None, None
+        aircraft = (resp.json().get("response", {}) or {}).get("aircraft") or {}
+        icao_type = (aircraft.get("icao_type") or "").strip().upper() or None
+        photo_url = aircraft.get("url_photo_thumbnail") or aircraft.get("url_photo")
+        return icao_type, photo_url
     except (requests.RequestException, ValueError) as exc:
         logger.debug("adsbdb機種取得に失敗（オフライン想定）: %s", exc)
-        return None
+        return None, None
 
 
 def _fetch_route_from_adsbdb(callsign):
@@ -247,8 +256,8 @@ def _load_icao24_country_ranges():
     return _icao24_country_ranges
 
 
-def icao24_country(icao):
-    """ICAO24アドレスの割り当て範囲から所属国を判定する（日本語名で返す）。
+def icao24_country_iso2(icao):
+    """ICAO24アドレスの割り当て範囲から所属国のISO2コードを判定する。
 
     ICAO Annex 10で国別にアドレス範囲が割り当てられている。約200範囲の
     網羅的なテーブル（data/icao24_country_ranges.csv）を使用し、未知の
@@ -268,9 +277,27 @@ def icao24_country(icao):
             span = high - low
             if best is None or span < best[0]:
                 best = (span, country_iso2)
-    if best is None:
+    return best[1] if best else None
+
+
+def icao24_country(icao):
+    """ICAO24アドレスの割り当て範囲から所属国を判定する（日本語名で返す）。"""
+    iso2 = icao24_country_iso2(icao)
+    if iso2 is None:
         return None
-    return COUNTRY_NAME_JA.get(best[1], best[1])
+    return COUNTRY_NAME_JA.get(iso2, iso2)
+
+
+def flag_emoji(iso2):
+    """ISO 3166-1 alpha-2国コードからUnicodeの国旗絵文字を生成する。
+
+    各アルファベット文字をUnicode地域旗指示記号（Regional Indicator Symbol）に
+    変換するだけのオフライン処理（A=U+1F1E6 ... Z=U+1F1FF への単純なオフセット）。
+    """
+    if not iso2 or len(iso2) != 2 or not iso2.isalpha():
+        return ""
+    iso2 = iso2.upper()
+    return "".join(chr(0x1F1E6 + (ord(c) - ord("A"))) for c in iso2)
 
 
 _AIRLINE_JA = {
@@ -430,6 +457,26 @@ _FOREIGN_AIRPORTS = {
 }
 
 
+# 日本語国名 -> ISO2コード（COUNTRY_NAME_JAの逆引き、_FOREIGN_AIRPORTSのiso2判定に使う）
+_COUNTRY_ISO2_FROM_JA = {name: code for code, name in COUNTRY_NAME_JA.items()}
+
+
+def airport_country_iso2(code):
+    """空港コードから所属国のISO2コードを判定する（国旗絵文字表示用）。"""
+    if not code:
+        return None
+    code = code.upper()
+    if code in _DOMESTIC_AIRPORTS:
+        return "JP"
+    if code in _FOREIGN_AIRPORTS:
+        _, country_ja = _FOREIGN_AIRPORTS[code]
+        return _COUNTRY_ISO2_FROM_JA.get(country_ja)
+    world_entry = _load_world_airports_db().get(code)
+    if world_entry:
+        return world_entry[1]
+    return None
+
+
 def format_airport(code):
     """空港コードを表記に変換する。
 
@@ -494,7 +541,7 @@ def enrich(icao, callsign, type_code=None):
     cached = _get_cached(icao) or {}
 
     adsbdb_origin, adsbdb_destination, adsbdb_airline_icao = _fetch_route_from_adsbdb(callsign)
-    adsbdb_type_code = _fetch_aircraft_type_from_adsbdb(icao)
+    adsbdb_type_code, photo_url = _fetch_aircraft_info_from_adsbdb(icao)
 
     origin_code, destination_code, operator_iata = adsbdb_origin, adsbdb_destination, None
     if origin_code is None and destination_code is None:
@@ -507,6 +554,10 @@ def enrich(icao, callsign, type_code=None):
     # ルート（出発地/目的地）以外は基本的に毎回フレッシュに計算する。
     origin = format_airport(origin_code) or cached.get("origin")
     destination = format_airport(destination_code) or cached.get("destination")
+    origin_flag = flag_emoji(airport_country_iso2(origin_code)) or cached.get("origin_flag") or ""
+    destination_flag = (
+        flag_emoji(airport_country_iso2(destination_code)) or cached.get("destination_flag") or ""
+    )
 
     fallback_type_code = adsbdb_type_code or _load_aircraft_type_db().get(icao) or type_code
     aircraft_type = format_aircraft_type(fallback_type_code) or cached.get("aircraft_type")
@@ -517,6 +568,8 @@ def enrich(icao, callsign, type_code=None):
         or cached.get("airline")
     )
     country = icao24_country(icao) or cached.get("country")  # ICAO24範囲判定はオフラインでも可能
+    country_flag = flag_emoji(icao24_country_iso2(icao)) or cached.get("country_flag") or ""
+    photo_url = photo_url or cached.get("photo_url")
 
     if aircraft_type is None and origin is None and airline is None and country is None:
         # 何も補完できなかった場合はキャッシュせず、次回再試行できるようにする
@@ -526,9 +579,13 @@ def enrich(icao, callsign, type_code=None):
         "callsign": callsign,
         "airline": airline,
         "country": country,
+        "country_flag": country_flag,
         "aircraft_type": aircraft_type,
         "origin": origin,
+        "origin_flag": origin_flag,
         "destination": destination,
+        "destination_flag": destination_flag,
+        "photo_url": photo_url,
     }
     _save_cache(icao, info)
     return info

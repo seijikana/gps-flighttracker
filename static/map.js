@@ -201,7 +201,8 @@
         var color = colorForAircraft(ac.icao);
         var alt = ac.altitude_m != null ? Math.round(ac.altitude_m) + " m" : "-";
         var spd = ac.speed_kmh != null ? Math.round(ac.speed_kmh) + " km/h" : "-";
-        var airlineCountry = [ac.airline, ac.country].filter(Boolean).join(" / ");
+        var countryWithFlag = [ac.country_flag, ac.country].filter(Boolean).join(" ");
+        var airlineCountry = [ac.airline, countryWithFlag].filter(Boolean).join(" / ");
 
         // 各行を<div>で独立したブロックにする（<br>とdisplay:blockを併用すると
         // 行間が二重になるため、改行は全てdiv境界のみで行う）
@@ -214,11 +215,18 @@
           "<div>" + altSpdType + "</div>",
         ];
         if (ac.origin) {
-          lines.push('<div class="route-line">発: ' + ac.origin + "</div>");
+          var originWithFlag = [ac.origin_flag, ac.origin].filter(Boolean).join(" ");
+          lines.push('<div class="route-line">発: ' + originWithFlag + "</div>");
         }
         if (ac.destination) {
-          lines.push('<div class="route-line">→ 着: ' + ac.destination + "</div>");
+          var destWithFlag = [ac.destination_flag, ac.destination].filter(Boolean).join(" ");
+          lines.push('<div class="route-line">→ 着: ' + destWithFlag + "</div>");
         }
+
+        var textHtml = '<div class="aircraft-row-text">' + lines.join("") + "</div>";
+        var photoHtml = ac.photo_url
+          ? '<img class="aircraft-row-photo" src="' + ac.photo_url + '" alt="" loading="lazy">'
+          : "";
 
         return (
           '<div class="aircraft-row" style="border-left-color:' +
@@ -226,7 +234,8 @@
           "; color:" +
           color +
           '">' +
-          lines.join("") +
+          textHtml +
+          photoHtml +
           "</div>"
         );
       })

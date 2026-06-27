@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 
 db.init_db()
+db.start_periodic_checkpoint()
 session_manager = gps_session.SessionManager()
 tracker = adsb_tracker.AdsbTracker(session_id_provider=session_manager.current_session_id)
 
@@ -83,9 +84,13 @@ def api_aircraft():
         info = item.pop("info", None) or {}
         item["airline"] = info.get("airline")
         item["country"] = info.get("country")
+        item["country_flag"] = info.get("country_flag")
         item["aircraft_type"] = info.get("aircraft_type")
         item["origin"] = info.get("origin")
+        item["origin_flag"] = info.get("origin_flag")
         item["destination"] = info.get("destination")
+        item["destination_flag"] = info.get("destination_flag")
+        item["photo_url"] = info.get("photo_url")
         result.append(item)
     return jsonify(result)
 

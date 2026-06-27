@@ -14,6 +14,9 @@ IMU_I2C_ADDR = int(os.environ.get("IMU_I2C_ADDR", "0x68"), 0)
 SESSION_STOP_SPEED_KMH = float(os.environ.get("SESSION_STOP_SPEED_KMH", "1.0"))
 SESSION_END_STOP_SECONDS = int(os.environ.get("SESSION_END_STOP_SECONDS", str(60 * 60)))  # 1時間
 IMU_VIBRATION_THRESHOLD_G = float(os.environ.get("IMU_VIBRATION_THRESHOLD_G", "0.05"))
+# GPSは10Hzで取得できるが、軌跡記録としては1秒間隔で十分なためDB書き込みを間引く
+# （無制限の書き込みはWALファイル肥大化・ディスクI/Oエラーの原因になるため）
+SESSION_POINT_MIN_INTERVAL_SEC = float(os.environ.get("SESSION_POINT_MIN_INTERVAL_SEC", "1.0"))
 
 # ADS-B (dump1090 / readsb)
 DUMP1090_URL = os.environ.get("DUMP1090_URL", "http://localhost:8080/data/aircraft.json")

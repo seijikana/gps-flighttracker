@@ -44,9 +44,13 @@ CREATE TABLE IF NOT EXISTS aircraft_info_cache (
     callsign TEXT,
     airline TEXT,
     country TEXT,
+    country_flag TEXT,
     aircraft_type TEXT,
     origin TEXT,
+    origin_flag TEXT,
     destination TEXT,
+    destination_flag TEXT,
+    photo_url TEXT,
     fetched_at REAL NOT NULL
 );
 """
@@ -79,8 +83,38 @@ def cursor():
 def init_db():
     conn = get_conn()
     conn.executescript(SCHEMA)
-    try:
-        conn.execute("ALTER TABLE aircraft_info_cache ADD COLUMN country TEXT")
-    except sqlite3.OperationalError:
-        pass  # 既にcountry列が存在する場合
+    for column in (
+        "country TEXT",
+        "country_flag TEXT",
+        "origin_flag TEXT",
+        "destination_flag TEXT",
+        "photo_url TEXT",
+    ):
+        try:
+            conn.execute(f"ALTER TABLE aircraft_info_cache ADD COLUMN {column}")
+        except sqlite3.OperationalError:
+            pass  # 既に列が存在する場合
     conn.commit()
+
+
+def start_periodic_checkpoint(interval_sec=60):
+    """WALファイルが無制限に肥大化するのを防ぐため、定期的にチェックポイントを実行する。
+
+    GPS/ADS-Bの書き込みが頻発する構成では、チェックポイントを行わないとWALが
+    数GB規模まで成長しディスクI/Oエラーの原因になる（実際に発生した事故への対策）。
+    専用のコネクションをバックグラウンドスレッドで保持し、他スレッドの書き込みを
+    妨げないPASSIVEモードで実行する。
+    """
+    import threading
+    import time
+
+    def _loop():
+        conn = sqlite3.connect(config.DB_PATH, timeout=30)
+        while True:
+            time.sleep(interval_sec)
+            try:
+                conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+            except sqlite3.OperationalError:
+                pass  # 他スレッドがロック中などは次回に任せる
+
+    threading.Thread(target=_loop, daemon=True).start()
