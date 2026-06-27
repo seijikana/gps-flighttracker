@@ -8,3 +8,5 @@ server.log
 tiles/
 .venv/
 venv/
+settings.json
+tile_download.log

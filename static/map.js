@@ -37,7 +37,6 @@
     iconAnchor: [24, 24],
   });
   var currentMarker = L.marker([0, 0], { icon: carIcon });
-  var historyPolyline = null;
   var aircraftMarkers = {}; // icao -> L.Marker
   var aircraftTrails = {}; // icao -> L.Polyline（前回位置と今回位置を直線で繋いだ軌跡）
   var aircraftColors = {}; // icao -> 割り当てられた色（アイコン/軌跡/リスト欄で共通）
@@ -201,12 +200,12 @@
         var color = colorForAircraft(ac.icao);
         var alt = ac.altitude_m != null ? Math.round(ac.altitude_m) + " m" : "-";
         var spd = ac.speed_kmh != null ? Math.round(ac.speed_kmh) + " km/h" : "-";
-        var countryWithFlag = [ac.country_flag, ac.country].filter(Boolean).join(" ");
-        var airlineCountry = [ac.airline, countryWithFlag].filter(Boolean).join(" / ");
+        var airlineCountry = [ac.airline, ac.country].filter(Boolean).join(" / ");
 
         // 各行を<div>で独立したブロックにする（<br>とdisplay:blockを併用すると
         // 行間が二重になるため、改行は全てdiv境界のみで行う）
-        var altSpdType = ["高度: " + alt, "速度: " + spd, ac.aircraft_type]
+        var dist = ac.distance_km != null ? ac.distance_km.toFixed(1) + " km" : null;
+        var altSpdType = [dist ? "距離: " + dist : null, "高度: " + alt, "速度: " + spd, ac.aircraft_type]
           .filter(Boolean)
           .join(" / ");
 
@@ -215,18 +214,11 @@
           "<div>" + altSpdType + "</div>",
         ];
         if (ac.origin) {
-          var originWithFlag = [ac.origin_flag, ac.origin].filter(Boolean).join(" ");
-          lines.push('<div class="route-line">発: ' + originWithFlag + "</div>");
+          lines.push('<div class="route-line">発: ' + ac.origin + "</div>");
         }
         if (ac.destination) {
-          var destWithFlag = [ac.destination_flag, ac.destination].filter(Boolean).join(" ");
-          lines.push('<div class="route-line">→ 着: ' + destWithFlag + "</div>");
+          lines.push('<div class="route-line">→ 着: ' + ac.destination + "</div>");
         }
-
-        var textHtml = '<div class="aircraft-row-text">' + lines.join("") + "</div>";
-        var photoHtml = ac.photo_url
-          ? '<img class="aircraft-row-photo" src="' + ac.photo_url + '" alt="" loading="lazy">'
-          : "";
 
         return (
           '<div class="aircraft-row" style="border-left-color:' +
@@ -234,43 +226,86 @@
           "; color:" +
           color +
           '">' +
-          textHtml +
-          photoHtml +
+          lines.join("") +
           "</div>"
         );
       })
       .join("");
   }
 
+  // 日付ごとのセッション軌跡オーバーレイ（チェックボックスでON/OFF、複数日同時表示可）
+  var DATE_COLOR_PALETTE = [
+    "#ff9f4e", "#4ea1ff", "#4eff8f", "#ffd24e", "#c44eff",
+    "#ff4e4e", "#4effe9", "#ff4ea1", "#9bff4e", "#4e6bff",
+  ];
+  var dateColors = {}; // date(YYYY-MM-DD) -> 色
+  var dateLayers = {}; // date -> L.LayerGroup（チェックを外すと地図から除去）
+  var nextDateColorIndex = 0;
+
+  function colorForDate(date) {
+    if (!dateColors[date]) {
+      dateColors[date] = DATE_COLOR_PALETTE[nextDateColorIndex % DATE_COLOR_PALETTE.length];
+      nextDateColorIndex += 1;
+    }
+    return dateColors[date];
+  }
+
   function loadSessionList() {
-    fetchJson("/api/sessions").then(function (sessions) {
+    fetchJson("/api/sessions/by_date").then(function (days) {
       sessionListEl.innerHTML = "";
-      sessions.forEach(function (s) {
-        var div = document.createElement("div");
-        div.className = "session-item" + (s.is_active ? " active-session" : "");
-        var start = new Date(s.started_at * 1000).toLocaleString();
-        div.textContent = (s.is_active ? "[走行中] " : "") + start + "（" + s.point_count + "点）";
-        div.addEventListener("click", function () {
-          showHistorySession(s.id);
+      days.forEach(function (d) {
+        var color = colorForDate(d.date);
+        var row = document.createElement("label");
+        row.className = "session-item date-item";
+        row.style.borderLeft = "6px solid " + color;
+
+        var checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = !!dateLayers[d.date];
+        checkbox.addEventListener("change", function () {
+          if (checkbox.checked) {
+            showDateTrack(d.date);
+          } else {
+            hideDateTrack(d.date);
+          }
         });
-        sessionListEl.appendChild(div);
+
+        var text = document.createElement("span");
+        text.textContent = " " + d.date + "（" + d.session_ids.length + "回・" + d.point_count + "点）";
+
+        row.appendChild(checkbox);
+        row.appendChild(text);
+        sessionListEl.appendChild(row);
       });
     });
   }
 
-  function showHistorySession(sessionId) {
-    fetchJson("/api/sessions/" + sessionId + "/track").then(function (points) {
-      var latlngs = points.map(function (p) {
-        return [p.lat, p.lon];
+  function showDateTrack(date) {
+    fetchJson("/api/sessions/track_by_date/" + date).then(function (tracks) {
+      var color = colorForDate(date);
+      var group = L.layerGroup();
+      var allLatLngs = [];
+      tracks.forEach(function (t) {
+        var latlngs = t.points.map(function (p) {
+          return [p.lat, p.lon];
+        });
+        if (latlngs.length === 0) return;
+        L.polyline(latlngs, { color: color, weight: 4 }).addTo(group);
+        allLatLngs = allLatLngs.concat(latlngs);
       });
-      if (historyPolyline) {
-        map.removeLayer(historyPolyline);
-      }
-      historyPolyline = L.polyline(latlngs, { color: "#ff9f4e", weight: 3, dashArray: "6 6" }).addTo(map);
-      if (latlngs.length > 0) {
-        map.fitBounds(historyPolyline.getBounds());
+      group.addTo(map);
+      dateLayers[date] = group;
+      if (allLatLngs.length > 0) {
+        map.fitBounds(L.latLngBounds(allLatLngs));
       }
     });
+  }
+
+  function hideDateTrack(date) {
+    if (dateLayers[date]) {
+      map.removeLayer(dateLayers[date]);
+      delete dateLayers[date];
+    }
   }
 
   refreshCurrentSession();

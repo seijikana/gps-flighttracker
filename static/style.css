@@ -53,6 +53,34 @@ html, body {
   background: #2a7d2a;
 }
 
+#settings-link {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  background: #333;
+  color: #eee;
+  border-radius: 6px;
+  text-decoration: none;
+  font-size: 15px;
+}
+
+#settings-link:hover {
+  background: #444;
+}
+
+.date-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.date-item input[type="checkbox"] {
+  flex: 0 0 auto;
+}
+
 #session-list {
   flex: 0 1 auto;
   max-height: 35%;
@@ -116,6 +144,14 @@ html, body {
   object-fit: cover;
   border-radius: 4px;
   background: #222;
+}
+
+/* 国旗（ローカル同梱のSVG、文字の間にインラインで挿入） */
+.flag-icon {
+  width: 16px;
+  height: 12px;
+  vertical-align: middle;
+  border-radius: 1px;
 }
 
 /* 発地/着地は空港名(県名)等で長くなりがちなため、折り返さず収める */

@@ -288,18 +288,6 @@ def icao24_country(icao):
     return COUNTRY_NAME_JA.get(iso2, iso2)
 
 
-def flag_emoji(iso2):
-    """ISO 3166-1 alpha-2国コードからUnicodeの国旗絵文字を生成する。
-
-    各アルファベット文字をUnicode地域旗指示記号（Regional Indicator Symbol）に
-    変換するだけのオフライン処理（A=U+1F1E6 ... Z=U+1F1FF への単純なオフセット）。
-    """
-    if not iso2 or len(iso2) != 2 or not iso2.isalpha():
-        return ""
-    iso2 = iso2.upper()
-    return "".join(chr(0x1F1E6 + (ord(c) - ord("A"))) for c in iso2)
-
-
 _AIRLINE_JA = {
     "ANA": "全日空(ANA)",
     "JAL": "日本航空(JAL)",
@@ -554,10 +542,12 @@ def enrich(icao, callsign, type_code=None):
     # ルート（出発地/目的地）以外は基本的に毎回フレッシュに計算する。
     origin = format_airport(origin_code) or cached.get("origin")
     destination = format_airport(destination_code) or cached.get("destination")
-    origin_flag = flag_emoji(airport_country_iso2(origin_code)) or cached.get("origin_flag") or ""
+    # *_flagには国旗PNG画像（static/flags/{iso2}.svg）参照用のISO2小文字コードを入れる
+    # （Unicode国旗絵文字はLinux環境でフォント未対応だと文字化けするため使わない）。
+    origin_flag = (airport_country_iso2(origin_code) or cached.get("origin_flag") or "").lower() or None
     destination_flag = (
-        flag_emoji(airport_country_iso2(destination_code)) or cached.get("destination_flag") or ""
-    )
+        airport_country_iso2(destination_code) or cached.get("destination_flag") or ""
+    ).lower() or None
 
     fallback_type_code = adsbdb_type_code or _load_aircraft_type_db().get(icao) or type_code
     aircraft_type = format_aircraft_type(fallback_type_code) or cached.get("aircraft_type")
@@ -568,7 +558,7 @@ def enrich(icao, callsign, type_code=None):
         or cached.get("airline")
     )
     country = icao24_country(icao) or cached.get("country")  # ICAO24範囲判定はオフラインでも可能
-    country_flag = flag_emoji(icao24_country_iso2(icao)) or cached.get("country_flag") or ""
+    country_flag = (icao24_country_iso2(icao) or cached.get("country_flag") or "").lower() or None
     photo_url = photo_url or cached.get("photo_url")
 
     if aircraft_type is None and origin is None and airline is None and country is None:

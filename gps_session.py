@@ -14,6 +14,7 @@ import time
 
 import config
 import db
+import settings_store
 
 logger = logging.getLogger(__name__)
 
@@ -169,9 +170,18 @@ class SessionManager:
         self._active_session_id = self._resume_active_session()
         self._last_moving_ts = None
         self._last_recorded_ts = 0.0
+        self._last_fix = None
         self._lock = threading.Lock()
         self._thread = None
         self._stop_event = threading.Event()
+
+    def current_position(self):
+        """直近のGPS位置(lat, lon)を返す。Fix未取得の場合はNone。"""
+        with self._lock:
+            fix = self._last_fix
+        if fix is None:
+            return None
+        return (fix.lat, fix.lon)
 
     @staticmethod
     def _resume_active_session():
@@ -224,6 +234,7 @@ class SessionManager:
         has_vibration = vibration_g > config.IMU_VIBRATION_THRESHOLD_G
 
         with self._lock:
+            self._last_fix = fix
             if is_moving or has_vibration:
                 self._last_moving_ts = now
 
@@ -237,10 +248,12 @@ class SessionManager:
                 self._active_session_id = self._create_session(now)
                 self._last_moving_ts = now
 
-            # GR7-10HZは10Hzで位置を返すが、毎回SQLiteに書き込むとWALファイルが
-            # 無制限に肥大化しディスクI/Oエラーの原因になる（実際に発生した事故への対策）。
-            # 走行軌跡の用途では1秒間隔で十分なため、書き込み頻度を抑える。
-            if now - self._last_recorded_ts >= config.SESSION_POINT_MIN_INTERVAL_SEC:
+            # 停車中（速度がSESSION_STOP_SPEED_KMH以下）は軌跡として記録しない
+            # （一晩駐車したままだと毎秒分のほぼ同一点が溜まり続け、DBが極端に肥大化する
+            # 事故が実際に発生したための対策）。走行中のみ、settings_storeで変更可能な
+            # 間引き秒数（speed_kmhの計算精度に支障が出ない範囲）でDBに書き込む。
+            point_interval = settings_store.get()["point_interval_sec"]
+            if is_moving and now - self._last_recorded_ts >= point_interval:
                 self._record_point(self._active_session_id, fix)
                 self._last_recorded_ts = now
 
