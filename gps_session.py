@@ -226,9 +226,16 @@ class SessionManager:
                 self._gps = MockGpsSource()
                 continue
             vibration_g = self._imu.read_vibration_g()
-            self._process_fix(fix, vibration_g)
+            self._process_fix(fix, vibration_g, is_mock=isinstance(self._gps, MockGpsSource))
 
-    def _process_fix(self, fix: GpsFix, vibration_g: float):
+    def _process_fix(self, fix: GpsFix, vibration_g: float, is_mock: bool = False):
+        if is_mock:
+            # gpsd切断時のモックフォールバックは開発環境用のダミー位置（既定で大阪）を
+            # 適当な速度で動かし続けるだけなので、本物の走行記録・現在地として一切
+            # 採用しない（実際に大阪へ瞬間移動する偽の軌跡が記録された事故への対策）。
+            # 復帰すれば次のreal fixからまた通常通り処理される。
+            return
+
         now = fix.ts
         is_moving = fix.speed_kmh > config.SESSION_STOP_SPEED_KMH
         has_vibration = vibration_g > config.IMU_VIBRATION_THRESHOLD_G
